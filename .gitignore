@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+data/raw/*.dat
+*.hea
+*.atr
+*.zip
+*.xws
+data/processed/
+*.npy
+
+
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+
+.env
+*.env
+
+
+.DS_Store
+Thumbs.db

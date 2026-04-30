@@ -1,0 +1,13 @@
+torch>=2.0
+numpy
+pandas
+scikit-learn
+matplotlib
+seaborn
+wfdb          # for MIT-BIH ECG
+fastapi
+uvicorn
+streamlit
+plotly
+python-dotenv
+pytest

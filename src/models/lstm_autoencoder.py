@@ -347,6 +347,7 @@ if __name__ == "__main__":
         X_val,
         epochs=100
     )
+    torch.save(model.state_dict(), MODELS_PATH / "cnn_ae.pt")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

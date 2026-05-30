@@ -329,7 +329,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     sys.path.append('src')
     from data.ecg_loader import load_processed_labeled
-    from models.lstm_autoencoder import (CNNAutoencoder,
+    from models.cnn_autoencoder import (CNNAutoencoder,
                                           AnomalyScorer as CNNScorer)
 
     # Load data 

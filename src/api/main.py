@@ -13,37 +13,22 @@ from pydantic import BaseModel, Field
 sys.path.append("src")
 
 
-# ---------------------------------------------------------------------------
 # Model loading helpers
-# ---------------------------------------------------------------------------
 
 def _load_module(name, path):
-    """Import a model file by file path without needing it installed as a package."""
     spec   = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-# Global state — populated once at startup, reused across every request.
 MODELS  = {}
 SCORERS = {}
 DEVICE  = torch.device("cpu")
 
 
 def load_all_models():
-    """
-    Load every model checkpoint that exists under models/ and attach a
-    fitted anomaly scorer to each one.
 
-    Threshold calibration strategy differs per model:
-      - CNN   : labelled validation set -> maximise F1  (needs y_val)
-      - Trans : unsupervised percentile on training scores (no labels needed)
-      - VAE   : same unsupervised percentile approach
-
-    Missing checkpoints are skipped so the API still starts even if only
-    some models have been trained.
-    """
     global MODELS, SCORERS, DEVICE
 
     cnn_mod   = _load_module("cnn_ae",   "src/models/cnn_autoencoder.py")
@@ -86,31 +71,27 @@ def load_all_models():
         print("  Warning: no model checkpoints found — API will start but predictions won't work")
         return
 
-    # load just enough data to fit the scorers
     from data.ecg_loader import load_processed_labeled
 
     X_train, X_val, y_val, X_test, y_test = load_processed_labeled()
-    X_fit = X_train[:8000]   # used for scaler.fit() and percentile thresholds
+    X_fit = X_train[:8000]  
 
-    # CNN scorer — uses labelled val set to maximise F1
     if "cnn" in MODELS:
         scorer = cnn_mod.AnomalyScorer(MODELS["cnn"], DEVICE)
         scorer.fit(X_fit)
-        scorer.optimize_threshold(X_val, y_val)   # signature: (X_val, y_val)
+        scorer.optimize_threshold(X_val, y_val)   
         SCORERS["cnn"] = scorer
 
-    # Transformer scorer — percentile threshold, no labels needed
     if "transformer" in MODELS:
         scorer = trans_mod.AnomalyScorer(MODELS["transformer"], DEVICE)
         scorer.fit(X_fit)
-        scorer.optimize_threshold(X_fit)           # signature: (X_train,)
+        scorer.optimize_threshold(X_fit)           
         SCORERS["transformer"] = scorer
 
-    # VAE scorer — same percentile approach
     if "vae" in MODELS:
         scorer = vae_mod.VAEAnomalyScorer(MODELS["vae"], str(DEVICE), n_samples=5)
         scorer.fit(X_fit)
-        scorer.optimize_threshold(X_fit)           # signature: (X_train,)
+        scorer.optimize_threshold(X_fit)           
         SCORERS["vae"] = scorer
 
     print(f"\nReady — loaded models: {list(MODELS.keys())}")
@@ -124,9 +105,7 @@ async def lifespan(app: FastAPI):
     print("=== Shutting down ===")
 
 
-# ---------------------------------------------------------------------------
 # App
-# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="Health Monitor API",
@@ -143,10 +122,7 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Request / Response schemas
-# ---------------------------------------------------------------------------
-
+# Request
 class ECGRequest(BaseModel):
     signal: list[float] = Field(
         ...,
@@ -189,13 +165,10 @@ class HealthResponse(BaseModel):
     device:        str
 
 
-# ---------------------------------------------------------------------------
 # Endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Liveness check — also reports which models are ready."""
     return HealthResponse(
         status="ok",
         models_loaded=list(MODELS.keys()),
@@ -205,7 +178,6 @@ async def health():
 
 @app.get("/models")
 async def list_models():
-    """List every model and scorer that was successfully loaded at startup."""
     return {
         "available": list(MODELS.keys()),
         "scorers":   list(SCORERS.keys()),
@@ -214,12 +186,7 @@ async def list_models():
 
 @app.post("/predict/ecg", response_model=ECGResponse)
 async def predict_ecg(req: ECGRequest):
-    """
-    Score a single 256-sample ECG window for anomalies.
-
-    The signal is z-score normalised before scoring so the model is robust
-    to different sensor gain settings across devices.
-    """
+   
     if req.model not in SCORERS:
         raise HTTPException(
             status_code=404,
@@ -231,7 +198,7 @@ async def predict_ecg(req: ECGRequest):
 
     t0      = time.perf_counter()
     scorer  = SCORERS[req.model]
-    score   = float(scorer.score(signal[np.newaxis, :]))
+    score   = float(scorer.score(signal[np.newaxis, :])[0])
     latency = (time.perf_counter() - t0) * 1000
 
     is_anomaly = score > scorer.threshold
@@ -252,12 +219,7 @@ async def predict_ecg(req: ECGRequest):
 
 @app.post("/predict/batch")
 async def predict_batch(signals: list[list[float]], model: str = "transformer"):
-    """
-    Score up to 500 ECG windows in a single call.
-
-    Each window is normalised independently so mixed-gain batches are
-    handled correctly.
-    """
+    
     if model not in SCORERS:
         raise HTTPException(status_code=404, detail=f"Model '{model}' is not available")
     if len(signals) > 500:
@@ -286,15 +248,7 @@ async def predict_batch(signals: list[list[float]], model: str = "transformer"):
 
 @app.post("/predict/icu", response_model=ICUResponse)
 async def predict_icu(req: ICURequest):
-    """
-    Predict deterioration probability for a single ICU patient.
-
-    Expects exactly 48 rows (one per hour) with 6 vitals each:
-    Heart Rate, Systolic BP, Diastolic BP, SpO2, Respiratory Rate, Temperature.
-
-    The model is loaded fresh per request since this endpoint is called
-    rarely compared to the ECG endpoints.
-    """
+   
     if len(req.vitals) != 48 or any(len(row) != 6 for row in req.vitals):
         raise HTTPException(
             status_code=400,
@@ -338,11 +292,7 @@ async def predict_icu(req: ICURequest):
 
 @app.get("/demo/ecg")
 async def demo_ecg(model: str = "transformer", anomalous: bool = False):
-    """
-    Generate a synthetic ECG and run it through the requested model.
-    Useful for smoke-testing without real patient data.
-    Pass anomalous=true to inject a noise burst that should trigger a flag.
-    """
+    
     t   = np.linspace(0, 2, 256)
     ecg = (
         np.sin(2 * np.pi * 1.2 * t)

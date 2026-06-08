@@ -11,3 +11,4 @@ streamlit
 plotly
 python-dotenv
 pytest
+huggingface_hub

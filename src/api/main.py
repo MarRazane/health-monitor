@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import importlib.util
@@ -11,6 +12,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 sys.path.append("src")
+
+
+def download_models_if_needed():
+    repo = os.environ.get("HF_REPO", "")
+    if not repo:
+        return  
+
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        print("huggingface_hub not installed — skipping model download")
+        return
+
+    Path("models").mkdir(exist_ok=True)
+    checkpoints = [
+        "cnn_ae_best.pt",
+        "transformer_ae_best.pt",
+        "vae_best.pt",
+        "icu_predictor_best.pt",
+    ]
+    for filename in checkpoints:
+        dest = Path("models") / filename
+        if not dest.exists():
+            print(f"  Downloading {filename} from {repo}...")
+            hf_hub_download(repo_id=repo, filename=filename, local_dir="models/")
+            print(f"  Done")
+
+download_models_if_needed()
+
 
 
 # Model loading helpers
@@ -28,7 +58,7 @@ DEVICE  = torch.device("cpu")
 
 
 def load_all_models():
-
+ 
     global MODELS, SCORERS, DEVICE
 
     cnn_mod   = _load_module("cnn_ae",   "src/models/cnn_autoencoder.py")
@@ -74,7 +104,7 @@ def load_all_models():
     from data.ecg_loader import load_processed_labeled
 
     X_train, X_val, y_val, X_test, y_test = load_processed_labeled()
-    X_fit = X_train[:8000]  
+    X_fit = X_train[:8000]   
 
     if "cnn" in MODELS:
         scorer = cnn_mod.AnomalyScorer(MODELS["cnn"], DEVICE)
@@ -85,13 +115,13 @@ def load_all_models():
     if "transformer" in MODELS:
         scorer = trans_mod.AnomalyScorer(MODELS["transformer"], DEVICE)
         scorer.fit(X_fit)
-        scorer.optimize_threshold(X_fit)           
+        scorer.optimize_threshold(X_fit)          
         SCORERS["transformer"] = scorer
 
     if "vae" in MODELS:
         scorer = vae_mod.VAEAnomalyScorer(MODELS["vae"], str(DEVICE), n_samples=5)
         scorer.fit(X_fit)
-        scorer.optimize_threshold(X_fit)           
+        scorer.optimize_threshold(X_fit)        
         SCORERS["vae"] = scorer
 
     print(f"\nReady — loaded models: {list(MODELS.keys())}")
@@ -103,7 +133,6 @@ async def lifespan(app: FastAPI):
     load_all_models()
     yield
     print("=== Shutting down ===")
-
 
 # App
 
@@ -122,7 +151,8 @@ app.add_middleware(
 )
 
 
-# Request
+# Request 
+
 class ECGRequest(BaseModel):
     signal: list[float] = Field(
         ...,
@@ -203,7 +233,6 @@ async def predict_ecg(req: ECGRequest):
 
     is_anomaly = score > scorer.threshold
 
-    # normalise distance from threshold to [0, 1] as a rough confidence
     margin     = abs(score - scorer.threshold)
     confidence = float(min(margin / (abs(scorer.threshold) + 1e-8), 1.0))
 
@@ -219,7 +248,7 @@ async def predict_ecg(req: ECGRequest):
 
 @app.post("/predict/batch")
 async def predict_batch(signals: list[list[float]], model: str = "transformer"):
-    
+ 
     if model not in SCORERS:
         raise HTTPException(status_code=404, detail=f"Model '{model}' is not available")
     if len(signals) > 500:
@@ -248,7 +277,7 @@ async def predict_batch(signals: list[list[float]], model: str = "transformer"):
 
 @app.post("/predict/icu", response_model=ICUResponse)
 async def predict_icu(req: ICURequest):
-   
+    
     if len(req.vitals) != 48 or any(len(row) != 6 for row in req.vitals):
         raise HTTPException(
             status_code=400,
@@ -267,7 +296,7 @@ async def predict_icu(req: ICURequest):
     model.load_state_dict(torch.load(icu_path, map_location=DEVICE))
     model.eval()
 
-    X   = np.array(req.vitals, dtype=np.float32)[np.newaxis]  # (1, 48, 6)
+    X   = np.array(req.vitals, dtype=np.float32)[np.newaxis]  
     X_t = torch.tensor(X)
 
     t0 = time.perf_counter()
